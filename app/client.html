@@ -1,0 +1,234 @@
+<html>
+  <script src="third-party/react.js"></script>
+  <script src="third-party/JSXTransformer.js"></script>
+
+  <style>
+    .queryError {
+      color: red;
+    }
+
+    .sqlQuery {
+      padding: 20px;
+      font-weight: bold;
+      font-size: 120%;
+    }
+
+    .queryContainer {
+      border-bottom: 3px dotted black;
+      margin-bottom: 20px;
+      padding-bottom: 20px;
+    }
+
+    table, th, td {
+      border: 1px solid black;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    th {
+      height: 50px;
+      background: rgb(110, 139, 253);
+    }
+
+    td {
+      height: 50px;
+      vertical-align: bottom;
+      padding: 15px;
+    }
+
+    tr:nth-child(even) {
+      background: rgb(174, 242, 227);
+    }
+  </style>
+
+  <body id="Body" style="zoom: 100%">
+    <div id="query_interface"></div>
+  </body>
+
+  <script type="text/jsx">
+    "use strict";
+
+    // zoom hack for presentation
+    function zoomIn() {
+        var Page = document.getElementsByTagName('body')[0];
+        var zoom = parseInt(Page.style.zoom) + 10 +'%'
+        Page.style.zoom = zoom;
+        return false;
+    }
+ 
+    function zoomOut() {
+        var Page = document.getElementsByTagName('body')[0];
+        var zoom = parseInt(Page.style.zoom) - 10 +'%'
+        Page.style.zoom = zoom;
+        return false;
+    }
+
+    document.getElementsByTagName('body')[0].onkeypress = function(e) {
+      if (e.which == 43) zoomIn();
+      if (e.which == 45) zoomOut();
+    }
+
+
+
+    var ipc = require('ipc');
+
+    var QueryInterface = React.createClass({
+      getInitialState: function() {
+        return {
+          queries: [],
+          nextQueryKey: 1
+        };
+      },
+
+      componentDidMount: function() {
+        ipc.on('query_results', function(msg) {
+          var new_queries = this.state.queries.map(function(query) {
+            if (query.key !== msg.key) return query;
+
+            return {
+                     key: query.key,
+                     sql: query.sql,
+                     results: msg.results,
+                     err: msg.err
+                   };
+          });
+
+          this.setState({ queries: new_queries });
+        }.bind(this));
+      },
+
+      onNewQuery: function(query) {
+        query.key = this.state.nextQueryKey;
+        query.results = null;
+
+        ipc.send('new_query',
+                 {
+                   cmd: 'query',
+                   key: query.key,
+                   sql: query.sql
+                 });
+
+        this.setState({
+          queries: [query].concat(this.state.queries),
+          nextQueryKey: this.state.nextQueryKey + 1
+        });
+      },
+
+      refreshQuery: function(key) {
+        var new_queries = this.state.queries.map(function(query) {
+          if (query.key !== key) return query;
+
+          ipc.send('new_query',
+                   {
+                     cmd: 'query',
+                     key: query.key,
+                     sql: query.sql
+                   });
+
+          return {
+            key: query.key,
+            sql: query.sql,
+            results: null,
+          };
+        });
+
+        this.setState({ queries: new_queries });
+      },
+
+      render: function() {
+        var queryNodes = this.state.queries.map(function (query) {
+          return <QueryResult key={query.key} query={query} refreshQuery={this.refreshQuery} />;
+        }.bind(this));
+
+        return (
+          <div>
+            <h1>DB Browser</h1>
+
+            <QueryInput onNewQuery={this.onNewQuery} />
+
+            {queryNodes}
+          </div>
+        );
+      }
+    });
+
+
+
+    var QueryInput = React.createClass({
+      componentDidMount: function() {
+        React.findDOMNode(this.refs.sql).focus();
+      },
+
+      handleSubmit: function(e) {
+        e.preventDefault();
+
+        var sql = React.findDOMNode(this.refs.sql).value.trim();
+
+        if (!sql) return;
+
+        this.props.onNewQuery({ sql: sql });
+
+        React.findDOMNode(this.refs.sql).value = '';
+      },
+
+      render: function() {
+        return (
+          <form onSubmit={this.handleSubmit}>
+            <input size="100" type="text" placeholder="issue sql query" ref="sql" />
+          </form>
+        );
+      },
+    });
+
+
+    var QueryResult = React.createClass({
+      render: function() {
+        return (
+          <div className="queryContainer" key={this.props.query.key}>
+            <div className="sqlQuery">{this.props.query.sql}</div>
+            <div>
+              <button onClick={this.props.refreshQuery.bind(this, this.props.query.key)}>Refresh</button>
+            </div>
+            <ResultTable query={this.props.query}/>
+          </div>
+        );
+      }
+    });
+
+
+    var ResultTable = React.createClass({
+      render: function() {
+        if (this.props.query['err']) {
+          return <div className="queryError">{this.props.query.err}</div>;
+        }
+
+        if (!this.props.query['results']) {
+          return <div>Loading...</div>;
+        }
+
+        var headings = this.props.query.results.column_names.map(function(name) { return <th>{name}</th> });
+
+        var rows = this.props.query.results.rows.map(function(row) {
+                     var row_elems = row.map(function(val) { return <td>{val}</td> });
+
+                     return <tr>{row_elems}</tr>;
+                   });
+
+        return (
+          <table>
+            <tr>{headings}</tr>
+            {rows}
+          </table>
+        );
+      }
+    });
+
+    React.render(
+      <QueryInterface />,
+      document.getElementById('query_interface')
+    );
+  </script>
+</html>
